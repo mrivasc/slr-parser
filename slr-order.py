@@ -26,14 +26,23 @@ class Grammar:
         start_symbol: símbolo inicial (por ejemplo 'S')
         terminals: conjunto explícito de terminales (por ejemplo {'a', 'b'})
         """
-        self.productions = productions
+
+        # Copia explícita preservando el orden del diccionario del usuario
+        self.productions = {
+            A: [list(rhs) for rhs in rhs_list]
+            for A, rhs_list in productions.items()
+        }
         self.start_symbol = start_symbol
 
-        self.nonterminals = set(productions.keys())
+        # Orden de no terminales definidos por el usuario (S, E, T, ...)
+        self._user_nonterminals_order = list(self.productions.keys())
 
+        self.nonterminals = set(self.productions.keys())
+
+        # Si no pasan terminales explícitos, se infieren
         if terminals is None:
             syms = set()
-            for rhs_list in productions.values():
+            for rhs_list in self.productions.values():
                 for rhs in rhs_list:
                     syms.update(rhs)
             self.terminals = (syms - self.nonterminals) - {EPSILON}
@@ -45,9 +54,59 @@ class Grammar:
         if self.aug_start in self.nonterminals:
             raise ValueError("Conflicto con símbolo inicial aumentado")
 
-        # añadimos producción S' -> S
+        # añadimos producción S' -> S (queremos que sea la #0)
         self.productions[self.aug_start] = [[self.start_symbol]]
         self.nonterminals.add(self.aug_start)
+
+        # -------------------------
+        # Orden de producciones
+        # -------------------------
+        # Queremos:
+        #   0: S' -> S
+        #   1..n: resto en el orden en que las definió el usuario
+        self.prod_order = {}
+        idx = 0
+
+        # 1) Primero la producción aumentada S' -> S
+        for rhs in self.productions[self.aug_start]:
+            key = (self.aug_start, tuple(rhs))
+            if key not in self.prod_order:
+                self.prod_order[key] = idx
+                idx += 1
+
+        # 2) Luego todas las producciones del usuario, en su orden original
+        for A in self._user_nonterminals_order:
+            for rhs in self.productions[A]:
+                key = (A, tuple(rhs))
+                if key not in self.prod_order:
+                    self.prod_order[key] = idx
+                    idx += 1
+
+        # -------------------------
+        # Orden de símbolos (para ordenar ítems)
+        # -------------------------
+        # Orden secuencial según van apareciendo:
+        #   empezando por S', luego S, luego resto de no terminales y símbolos
+        #   al recorrer las producciones en orden.
+        self.symbol_rank = {}
+        sym_idx = 0
+
+        def register_symbol(sym):
+            nonlocal sym_idx
+            if sym not in self.symbol_rank:
+                self.symbol_rank[sym] = sym_idx
+                sym_idx += 1
+
+        # Aseguramos primero S' y luego S
+        register_symbol(self.aug_start)
+        register_symbol(self.start_symbol)
+
+        # Luego, en el orden de los no terminales del usuario, sus LHS y RHS
+        for A in self._user_nonterminals_order:
+            register_symbol(A)
+            for rhs in self.productions[A]:
+                for X in rhs:
+                    register_symbol(X)
 
     # -------------------------
     # FIRST
@@ -303,6 +362,7 @@ class Grammar:
                 print("Cadena aceptada")
                 return True
 
+
 def export_lr0_to_dot(G: Grammar, filename: str = "lr0_automaton.dot"):
     """
     Genera un archivo .dot con el autómata LR(0) de la gramática.
@@ -320,7 +380,21 @@ def export_lr0_to_dot(G: Grammar, filename: str = "lr0_automaton.dot"):
     # nodos: I0, I1, ...
     for idx, I in enumerate(G.lr0_states):
         items_lines = []
-        for (A, rhs, dot) in I:
+
+        # ordenar items por:
+        # 1) símbolo de la izquierda según orden secuencial (G.symbol_rank)
+        # 2) orden de la producción (G.prod_order)
+        # 3) posición del punto (dot)
+        sorted_items = sorted(
+            I,
+            key=lambda item: (
+                G.symbol_rank.get(item[0], 10**9),
+                G.prod_order.get((item[0], item[1]), 10**9),
+                item[2],
+            )
+        )
+
+        for (A, rhs, dot) in sorted_items:
             # construir producción con el punto
             rhs_with_dot = list(rhs)
             rhs_with_dot.insert(dot, "·")
@@ -333,7 +407,6 @@ def export_lr0_to_dot(G: Grammar, filename: str = "lr0_automaton.dot"):
         # unir cada item en una línea; escapar comillas
         label = "\\n".join(items_lines).replace('"', '\\"')
         lines.append(f'  I{idx} [label="{label}"];')
-
 
     # aristas: transiciones con símbolo X
     for (i, X), j in G.lr0_transitions.items():
@@ -357,7 +430,6 @@ def print_slr_tables(G: Grammar):
     """
     if not hasattr(G, "action"):
         G.build_slr_table()
-        
 
     console = Console()
 
@@ -412,15 +484,11 @@ def print_slr_tables(G: Grammar):
 
 # ==========================
 # Ejemplo con la gramática:
-#   S -> A A
-#   A -> a A | b
+#   S -> E
+#   E -> E + T | T
+#   T -> id
 # ==========================
 if __name__ == "__main__":
-    # grammar_prods = {
-    #     'S': [['A', 'A']],
-    #     'A': [['a', 'A'], ['b']]
-    # }
-    # terminals = {'a', 'b'}
     grammar_prods = {
         'S': [['E']],
         'E': [['E', '+', 'T'], ['T']],
@@ -444,17 +512,17 @@ if __name__ == "__main__":
     console.print("\n[bold]Construyendo tabla SLR(1)...[/bold]")
     G.build_slr_table()
     print_slr_tables(G)
-    
+
     # Exportar autómata LR(0) a DOT
     export_lr0_to_dot(G, filename="lr0_automaton.dot")
 
-    # Pruebas de cadenas para la gramática S -> A A, A -> aA | b
+    # Estos tests no corresponden a esta gramática, puedes ajustarlos si quieres probarla de verdad
     tests = [
-        ['b', 'b'],              # acepta
-        ['a', 'b', 'b'],         # acepta
-        ['a', 'a', 'b', 'b'],    # acepta
-        ['b'],                   # rechaza
-        ['a', 'b'],              # rechaza
+        ['b', 'b'],
+        ['a', 'b', 'b'],
+        ['a', 'a', 'b', 'b'],
+        ['b'],
+        ['a', 'b'],
     ]
 
     for w in tests:
