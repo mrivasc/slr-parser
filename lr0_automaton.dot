@@ -1,0 +1,21 @@
+digraph LR0 {
+  rankdir=LR;
+  node [shape=ellipse, fontname="Courier"];
+  I0 [label="A -> ·b\nS -> ·AA\nA -> ·aA\nS' -> ·S"];
+  I1 [label="A -> ·b\nA -> ·aA\nS -> A·A"];
+  I2 [label="A -> b·"];
+  I3 [label="S' -> S·"];
+  I4 [label="A -> ·b\nA -> ·aA\nA -> a·A"];
+  I5 [label="S -> AA·"];
+  I6 [label="A -> aA·"];
+  I0 -> I1 [label="A"];
+  I0 -> I2 [label="b"];
+  I0 -> I3 [label="S"];
+  I0 -> I4 [label="a"];
+  I1 -> I5 [label="A"];
+  I1 -> I2 [label="b"];
+  I1 -> I4 [label="a"];
+  I4 -> I6 [label="A"];
+  I4 -> I2 [label="b"];
+  I4 -> I4 [label="a"];
+}
